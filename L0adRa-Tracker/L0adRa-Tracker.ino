@@ -29,20 +29,52 @@
 boolean i2cStatus;
 TwoWire i2c = TwoWire(1);
 
-// ***************
-// Battery voltage
-// ***************
+// *******
+// SysTime
+// *******
 
-float vBat;
+#define SYSTIME_PAYLOAD_FLAG_OFFSET 0
+#define SYSTIME_PAYLOAD_FLAG_BIT 7
 
 // *******************
 // DHT temp/hum sensor
 // *******************
 
 #define DHT_TYPE DHT22  // either DHT11 or DHT22
+#define DHT_TEMP_MIN_VALUE -74.0
+#define DHT_TEMP_MAX_VALUE 54.0
+#define DHT_TEMP_ACCURACY 0.5
+#define DHT_TEMP_PAYLOAD_FLAG_OFFSET 0
+#define DHT_TEMP_PAYLOAD_FLAG_BIT 6
+#define DHT_HUMIDITY_MIN_VALUE 0.0
+#define DHT_HUMIDITY_MAX_VALUE 100.0
+#define DHT_HUMIDITY_ACCURACY 1.0
+#define DHT_HUMIDITY_PAYLOAD_FLAG_OFFSET 0
+#define DHT_HUMIDITY_PAYLOAD_FLAG_BIT 5
+
 DHT dht(DHT_PIN, DHT_TYPE);
 float dhtTempValue;
 float dhtHumidityValue;
+
+// ***************************
+// BMP180 pressure/temp sensor
+// ***************************
+
+Adafruit_BMP085 bmp;
+boolean bmpStatus;
+float bmpTempValue;
+unsigned int bmpPressureValue;
+
+#define BMP_TEMP_MIN_VALUE -74.0
+#define BMP_TEMP_MAX_VALUE 54.0
+#define BMP_TEMP_ACCURACY 0.5
+#define BMP_TEMP_PAYLOAD_FLAG_OFFSET 0
+#define BMP_TEMP_PAYLOAD_FLAG_BIT 4
+#define BMP_PRESSURE_MIN_VALUE 0
+#define BMP_PRESSURE_MAX_VALUE 120000
+#define BMP_PRESSURE_ACCURACY 2.0
+#define BMP_PRESSURE_PAYLOAD_FLAG_OFFSET 0
+#define BMP_PRESSURE_PAYLOAD_FLAG_BIT 3
 
 // ******************************
 // SCD40 CO2/temp/humidity sensor
@@ -54,14 +86,67 @@ float scd4xTempValue;
 unsigned int scd4xCO2Value;
 float scd4xHumidityValue;
 
-// ***************************
-// BMP180 pressure/temp sensor
-// ***************************
+#define SCD_TEMP_MIN_VALUE -74.0
+#define SCD_TEMP_MAX_VALUE 54.0
+#define SCD_TEMP_ACCURACY 0.5
+#define SCD_TEMP_PAYLOAD_FLAG_OFFSET 0
+#define SCD_TEMP_PAYLOAD_FLAG_BIT 2
+#define SCD_HUMIDITY_MIN_VALUE 0.0
+#define SCD_HUMIDITY_MAX_VALUE 100.0
+#define SCD_HUMIDITY_ACCURACY 1.0
+#define SCD_HUMIDITY_PAYLOAD_FLAG_OFFSET 0
+#define SCD_HUMIDITY_PAYLOAD_FLAG_BIT 1
+#define SCD_CO2_MIN_VALUE 0.0
+#define SCD_CO2_MAX_VALUE 2550.0
+#define SCD_CO2_ACCURACY 10.0
+#define SCD_CO2_PAYLOAD_FLAG_OFFSET 0
+#define SCD_CO2_PAYLOAD_FLAG_BIT 0
 
-Adafruit_BMP085 bmp;
-boolean bmpStatus;
-float bmpTempValue;
-unsigned int bmpPressureValue;
+// ***************
+// Battery voltage
+// ***************
+
+float vBat;
+
+#define VBAT_MIN_VALUE 0.0
+#define VBAT_MAX_VALUE 4.5
+#define VBAT_ACCURACY 0.02
+#define VBAT_PAYLOAD_FLAG_OFFSET 1
+#define VBAT_PAYLOAD_FLAG_BIT 7
+
+// **********
+// GPS module
+// **********
+
+#define GPS_SERIAL Serial2  // serial port
+#define GPS_BAUD_RATE 9600  // baudrate
+#define GPS_TIMEOUT 1500    // timeout in milliseconds
+
+#define GPS_FAIL -1   // timeout error
+#define GPS_NO_FIX 0  // no fix
+#define GPS_FIX 1     // fix;
+
+#define GPS_PAYLOAD_FLAG_OFFSET 1
+#define GPS_PAYLOAD_FLAG_BIT 6
+
+#define GPS_ALTITUDE_MIN_VALUE 0.0
+#define GPS_ALTITUDE_MAX_VALUE 50000.0
+#define GPS_ALTITUDE_ACCURACY 1.0
+
+TinyGPS gps;
+
+unsigned short oldSentences = 0;
+float latitude;
+float longitude;
+float altitude;
+float course;
+float speed;
+unsigned long date;
+unsigned long hms;
+unsigned long age;
+unsigned char sats;
+unsigned long fixAge;
+boolean hasFix;
 
 // **************
 // EEPROM storage
@@ -88,6 +173,7 @@ const lmic_pinmap lmic_pins = {
 
 #define LORAWAN_RESPONSE_BUFFER_SIZE 30
 #define LORAWAN_APP_PAYLOAD_BUFFER_SIZE 51
+int payloadSize = 0;
 
 unsigned char LoRaWanResponse[LORAWAN_RESPONSE_BUFFER_SIZE];
 int loopCount = -1;
@@ -98,33 +184,6 @@ static osjob_t sendjob;
 void os_getDevEui(unsigned char *buf) {}
 void os_getArtEui(unsigned char *buf) {}
 void os_getDevKey(unsigned char *buf) {}
-
-// **********
-// GPS module
-// **********
-
-#define GPS_SERIAL Serial2  // serial port
-#define GPS_BAUD_RATE 9600  // baudrate
-#define GPS_TIMEOUT 1500    // timeout in milliseconds
-
-#define GPS_FAIL -1   // timeout error
-#define GPS_NO_FIX 0  // no fix
-#define GPS_FIX 1     // fix;
-
-TinyGPS gps;
-
-unsigned short oldSentences = 0;
-float latitude;
-float longitude;
-float altitude;
-float course;
-float speed;
-unsigned long date;
-unsigned long hms;
-unsigned long age;
-unsigned char sats;
-unsigned long fixAge;
-boolean hasFix;
 
 // ***********
 // OLED module
@@ -446,7 +505,7 @@ void doSend(osjob_t *j) {
   else {
 
     #ifdef RADIO_ON
-      LMIC_setTxData2(1, payload, sizeof(payload), 0);  // Prepare upstream data transmission
+      LMIC_setTxData2(1, payload, payloadSize, 0);  // Prepare upstream data transmission
     #endif
 
     EEPROM.write(EEPROM_SEQNOUP_ADDR, LMIC.seqnoUp);
@@ -668,67 +727,160 @@ int updateGPS() {
 // --------------------------
 void updatePayload() {
 
-  // time: unsigned short
-  // BMP#temp: float
-  // BMP#pressure: float
-  // gps fix (0/1) : byte
-  // gps time: unsigned long
-  // altitude: float
-  // latitude: float
-  // longitude: float
-  // TBC (scd4x)
+  int offset = 2;
+  resetSensorFlagsPayload();
+  
+  offset = updateSysTimePayload(offset);
+  offset = updateDHTPayload(offset);
+  offset = updateBMPPayload(offset);
+  offset = updateSCDPayload(offset);
+  offset = updateVBatPayload(offset);
+  offset = updateGPSPayload(offset);
+  payloadSize = offset;
+}
+
+// -----------------------------
+// Update SysTime sensor payload
+// -----------------------------
+int updateSysTimePayload(int offset) {
   unsigned short uptime = (millis() / 1000);
-  payload[0] = ((uint8_t *)&uptime)[0];
-  payload[1] = ((uint8_t *)&uptime)[1]; 
-  payload[2] = ((uint8_t *)&dhtTempValue)[0];
-  payload[3] = ((uint8_t *)&dhtTempValue)[1];
-  payload[4] = ((uint8_t *)&dhtTempValue)[2];
-  payload[5] = ((uint8_t *)&dhtTempValue)[3];
-  payload[6] = ((uint8_t *)&dhtHumidityValue)[0];
-  payload[7] = ((uint8_t *)&dhtHumidityValue)[1];
-  payload[8] = ((uint8_t *)&dhtHumidityValue)[2];
-  payload[9] = ((uint8_t *)&dhtHumidityValue)[3];
-  payload[10] = ((uint8_t *)&bmpTempValue)[0];
-  payload[11] = ((uint8_t *)&bmpTempValue)[1];
-  payload[12] = ((uint8_t *)&bmpTempValue)[2];
-  payload[13] = ((uint8_t *)&bmpTempValue)[3];
-  payload[14] = ((uint8_t *)&bmpPressureValue)[0];
-  payload[15] = ((uint8_t *)&bmpPressureValue)[1];
-  payload[16] = ((uint8_t *)&bmpPressureValue)[2];
-  payload[17] = ((uint8_t *)&bmpPressureValue)[3];
-  payload[18] = ((uint8_t *)&scd4xTempValue)[0];
-  payload[19] = ((uint8_t *)&scd4xTempValue)[1];
-  payload[20] = ((uint8_t *)&scd4xTempValue)[2];
-  payload[21] = ((uint8_t *)&scd4xTempValue)[3];
-  payload[22] = ((uint8_t *)&scd4xCO2Value)[0];
-  payload[23] = ((uint8_t *)&scd4xCO2Value)[1];
-  payload[24] = ((uint8_t *)&scd4xCO2Value)[2];
-  payload[25] = ((uint8_t *)&scd4xCO2Value)[3];
-  payload[26] = ((uint8_t *)&scd4xHumidityValue)[0];
-  payload[27] = ((uint8_t *)&scd4xHumidityValue)[1];
-  payload[28] = ((uint8_t *)&scd4xHumidityValue)[2];
-  payload[29] = ((uint8_t *)&scd4xHumidityValue)[3];
-  payload[30] = (uint8_t)(hasFix ? 1 : 0);
-  payload[31] = ((uint8_t *)&hms)[0];
-  payload[32] = ((uint8_t *)&hms)[1];
-  payload[33] = ((uint8_t *)&hms)[2];
-  payload[34] = ((uint8_t *)&hms)[3];
-  payload[35] = ((uint8_t *)&altitude)[0];
-  payload[36] = ((uint8_t *)&altitude)[1];
-  payload[37] = ((uint8_t *)&altitude)[2];
-  payload[38] = ((uint8_t *)&altitude)[3];
-  payload[39] = ((uint8_t *)&latitude)[0];
-  payload[40] = ((uint8_t *)&latitude)[1];
-  payload[41] = ((uint8_t *)&latitude)[2];
-  payload[42] = ((uint8_t *)&latitude)[3];
-  payload[43] = ((uint8_t *)&longitude)[0];
-  payload[44] = ((uint8_t *)&longitude)[1];
-  payload[45] = ((uint8_t *)&longitude)[2];
-  payload[46] = ((uint8_t *)&longitude)[3];
-  payload[47] = ((uint8_t *)&vBat)[0];
-  payload[48] = ((uint8_t *)&vBat)[1];
-  payload[49] = ((uint8_t *)&vBat)[2];
-  payload[50] = ((uint8_t *)&vBat)[3];
+  setSensorFlagPayload(SYSTIME_PAYLOAD_FLAG_OFFSET, SYSTIME_PAYLOAD_FLAG_BIT);
+  payload[offset++] = ((uint8_t *)&uptime)[0];
+  payload[offset++] = ((uint8_t *)&uptime)[1]; 
+  return offset;
+}
+
+// -------------------------
+// Update DHT sensor payload
+// -------------------------
+int updateDHTPayload(int offset) {
+  if ((dhtTempValue >= DHT_TEMP_MIN_VALUE)&&(dhtTempValue <= DHT_TEMP_MAX_VALUE)) {
+    setSensorFlagPayload(DHT_TEMP_PAYLOAD_FLAG_OFFSET, DHT_TEMP_PAYLOAD_FLAG_BIT);
+    unsigned char dhtTempPayloadValue = (unsigned char)((dhtTempValue - DHT_TEMP_MIN_VALUE)/DHT_TEMP_ACCURACY);
+    payload[offset++] = dhtTempPayloadValue;
+  }
+  if ((dhtHumidityValue >= DHT_HUMIDITY_MIN_VALUE)&&(dhtHumidityValue <= DHT_HUMIDITY_MAX_VALUE)) {
+    setSensorFlagPayload(DHT_HUMIDITY_PAYLOAD_FLAG_OFFSET, DHT_HUMIDITY_PAYLOAD_FLAG_BIT);
+    unsigned char dhtHumidityPayloadValue = (unsigned char)((dhtHumidityValue - DHT_HUMIDITY_MIN_VALUE)/DHT_HUMIDITY_ACCURACY);
+    payload[offset++] = dhtHumidityPayloadValue;
+  }
+  return offset;
+}
+
+// -------------------------
+// Update BMP sensor payload
+// -------------------------
+int updateBMPPayload(int offset) {
+  if (!bmpStatus) 
+    return offset;
+  
+  if ((bmpTempValue >= BMP_TEMP_MIN_VALUE)&&(bmpTempValue <= BMP_TEMP_MAX_VALUE)) {
+    setSensorFlagPayload(BMP_TEMP_PAYLOAD_FLAG_OFFSET, BMP_TEMP_PAYLOAD_FLAG_BIT);
+    unsigned char bmpTempPayloadValue = (unsigned char)((bmpTempValue - BMP_TEMP_MIN_VALUE)/BMP_TEMP_ACCURACY);
+    payload[offset++] = bmpTempPayloadValue;
+  }
+
+  if ((bmpPressureValue >= BMP_PRESSURE_MIN_VALUE)&&(bmpPressureValue <= BMP_PRESSURE_MAX_VALUE)) {
+    setSensorFlagPayload(BMP_PRESSURE_PAYLOAD_FLAG_OFFSET,BMP_PRESSURE_PAYLOAD_FLAG_BIT);
+    unsigned short bmpPressurePayloadValue = (unsigned short)((bmpPressureValue - BMP_PRESSURE_MIN_VALUE)/BMP_PRESSURE_ACCURACY);
+    payload[offset++] = ((uint8_t *)&bmpPressurePayloadValue)[0];
+    payload[offset++] = ((uint8_t *)&bmpPressurePayloadValue)[1];
+  }
+
+  return offset;
+}
+
+// -------------------------
+// Update SCD sensor payload
+// -------------------------
+int updateSCDPayload(int offset) {
+  if (!i2cStatus) 
+    return offset;
+  
+  boolean falseData = (scd4xTempValue == -45.0)&&(scd4xHumidityValue == 0.0)&&(scd4xCO2Value == 0.0);
+  if (falseData) 
+    return offset;
+
+  if ((scd4xTempValue >= SCD_TEMP_MIN_VALUE)&&(scd4xTempValue <= SCD_TEMP_MAX_VALUE)) {
+    setSensorFlagPayload(SCD_TEMP_PAYLOAD_FLAG_OFFSET, SCD_TEMP_PAYLOAD_FLAG_BIT);
+    unsigned char scd4xTempPayloadValue = (unsigned char)((scd4xTempValue - SCD_TEMP_MIN_VALUE)/SCD_TEMP_ACCURACY);
+    payload[offset++] = scd4xTempPayloadValue;
+  }
+
+  if ((scd4xHumidityValue >= SCD_HUMIDITY_MIN_VALUE)&&(scd4xHumidityValue <= SCD_HUMIDITY_MAX_VALUE)) {
+    setSensorFlagPayload(SCD_HUMIDITY_PAYLOAD_FLAG_OFFSET, SCD_HUMIDITY_PAYLOAD_FLAG_BIT);
+    unsigned char scd4xHumidityPayloadValue = (unsigned char)((scd4xHumidityValue - SCD_HUMIDITY_MIN_VALUE)/SCD_HUMIDITY_ACCURACY);
+    payload[offset++] = scd4xHumidityPayloadValue;
+  }
+
+  if ((scd4xCO2Value >= SCD_CO2_MIN_VALUE)&&(scd4xCO2Value <= SCD_CO2_MAX_VALUE)) {
+    setSensorFlagPayload(SCD_CO2_PAYLOAD_FLAG_OFFSET, SCD_CO2_PAYLOAD_FLAG_BIT);
+    unsigned char scd4xC02PayloadValue = (unsigned char)((scd4xCO2Value - SCD_CO2_MIN_VALUE)/SCD_CO2_ACCURACY);
+    payload[offset++] = scd4xC02PayloadValue;
+  }
+
+  return offset;
+}
+
+// --------------------------
+// Update VBat sensor payload
+// --------------------------
+int updateVBatPayload(int offset) {
+  if ((vBat >= VBAT_MIN_VALUE)&&(vBat <= VBAT_MAX_VALUE)) {
+    setSensorFlagPayload(VBAT_PAYLOAD_FLAG_OFFSET, VBAT_PAYLOAD_FLAG_BIT);
+    unsigned char vBatPayloadValue = (unsigned char)((vBat - VBAT_MIN_VALUE)/VBAT_ACCURACY);
+    payload[offset++] = vBatPayloadValue;
+  }
+
+  return offset;
+}
+
+// ------------------
+// Update GPS payload
+// ------------------
+int updateGPSPayload(int offset) {
+  if (hasFix) {
+    setSensorFlagPayload(GPS_PAYLOAD_FLAG_OFFSET, GPS_PAYLOAD_FLAG_BIT);
+    payload[offset++] = ((uint8_t *)&hms)[0];
+    payload[offset++] = ((uint8_t *)&hms)[1];
+    payload[offset++] = ((uint8_t *)&hms)[2];
+    payload[offset++] = ((uint8_t *)&hms)[3];
+    unsigned short altitudePayloadValue = (unsigned short)((altitude - GPS_ALTITUDE_MIN_VALUE)/GPS_ALTITUDE_ACCURACY);
+    payload[offset++] = ((uint8_t *)&altitudePayloadValue)[0];
+    payload[offset++] = ((uint8_t *)&altitudePayloadValue)[1]; 
+    payload[offset++] = ((uint8_t *)&latitude)[0];
+    payload[offset++] = ((uint8_t *)&latitude)[1];
+    payload[offset++] = ((uint8_t *)&latitude)[2];
+    payload[offset++] = ((uint8_t *)&latitude)[3];
+    payload[offset++] = ((uint8_t *)&longitude)[0];
+    payload[offset++] = ((uint8_t *)&longitude)[1];
+    payload[offset++] = ((uint8_t *)&longitude)[2];
+    payload[offset++] = ((uint8_t *)&longitude)[3];
+  }
+
+  return offset;
+}
+
+// ------------------
+// Reset sensor flags
+// ------------------
+void resetSensorFlagsPayload() {
+  payload[0] = 0;
+  payload[1] = 0;
+}
+
+// -----------------
+// Unset sensor flag
+// -----------------
+void unsetSensorFlagPayload(int flagOffset, int flagBit) {
+  payload[flagOffset] = payload[flagOffset] & ((0b11111111) ^ (0b00000001 << (flagBit)));
+}
+
+// -----------------
+// Set sensor flag
+// -----------------
+void setSensorFlagPayload(int flagOffset, int flagBit) {
+  payload[flagOffset] = payload[flagOffset] | (0b00000001 << (flagBit));
 }
 
 // --------------------
