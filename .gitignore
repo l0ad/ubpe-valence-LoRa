@@ -1,2 +1,6 @@
 
 L0adRa-Tracker/LoRaWan-ABP-auth.h
+TTN-MQTT-Client/ttn-mqtt-auth.cfg
+*.json
+*.xml
+*.iml
