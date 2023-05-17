@@ -12,6 +12,7 @@
 #define SD_MISO_PIN 34
 #define SERVO_LEFT_PIN 21
 #define SERVO_RIGHT_PIN 22
+#define CAMERA_TILT_PIN 22 // alias for SERVO_RIGHT_PIN
 #define DHT_PIN 25
 #define MPU_IRQ_PIN 35
 #define HMC_DATA_READY_PIN 38

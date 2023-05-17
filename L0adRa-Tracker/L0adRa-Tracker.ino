@@ -2,8 +2,10 @@
 #include <EEPROM.h>
 #include <SPI.h>
 #include <SD.h>
-#include <OneWire.h>            // OneWrire by Jim Studt, ... (v2.3.7)
-#include <DallasTemperature.h>  // DallasTemperature by Miles Burton, ... (v3.9.0)
+//#include <OneWire.h>            // OneWrire by Jim Studt, ... (v2.3.7)
+//#include <DallasTemperature.h>  // DallasTemperature by Miles Burton, ... (v3.9.0)
+
+#include <ESP32Servo.h>
 
 #include "lmic.h"               // MCCI LoRaWAN LMIC by IBM, ... (v4.1.1)
 #include <hal/hal.h>
@@ -13,7 +15,9 @@
 #include <DHT.h>               // DHT Sensor Library by Adafruit (v1.4.4)
 #include <Adafruit_BMP085.h>   // Adafruit BMP085 Library (v1.2.2)
 #include <DFRobot_SCD4X.h>     // DFRobot SCD4x Library (v1.0.1)
-#include <TinyGPS.h>           // TinyGPS by Mikal Hart (v13.0.0)
+#include <TinyGPS.h>           // TinyGPS by Mikal Hart (v13.0.0) 
+                               // N.B. for multi-constellations lib's .c must be patched 
+                               // to consider GNxxx sentences instead of GPxxx ones**
 
 #include "global-config.h"     // Debug, Radio, Id
 #include "pinout.h"            // Pinout
@@ -250,6 +254,33 @@ boolean sdWriteFile(fs::FS &fs, const char *path, const char *message, const cha
   return result;
 }
 
+// *******************
+// Camera Tilt (servo)
+// *******************
+
+#define CAMERA_TILT_SKY_ANGLE 0
+#define CAMERA_TILT_HORIZON_ANGLE 85
+#define CAMERA_TILT_GROUND_ANGLE 170
+
+#define CAMERA_TILT_SERVO_MIN_PULSE_WIDTH 500
+#define CAMERA_TILT_SERVO_MAX_PULSE_WIDTH 2450
+
+#define CAMERA_STATE_TAKING_OFF 0
+#define CAMERA_STATE_ASCENDING 1
+#define CAMERA_STATE_AROUND_BURST 2
+#define CAMERA_STATE_LANDING 3
+
+#define CAMERA_STATE_TAKING_OFF_ALTITUDE_THRESHOLD 5000
+#define CAMERA_STATE_BURST_ALTITUDE_THRESHOLD 20000
+#define CAMERA_STATE_LANDING_ALTITUDE_THRESHOLD 5000
+
+Servo cameraTilt; 
+int cameraState;
+int cameraAngleIndex;
+#define CAMERA_ANGLE_COUNT 3
+const int CAMERA_ANGLES[] = {CAMERA_TILT_SKY_ANGLE, CAMERA_TILT_HORIZON_ANGLE, CAMERA_TILT_GROUND_ANGLE };
+
+
 // ###############
 // Setup functions
 // ###############
@@ -275,6 +306,7 @@ void setup() {
   setupSCD4x();
   setupSD();
   setupLMIC();
+  setupCameraTilt();
 }
 
 // --------------------
@@ -472,6 +504,23 @@ void setupSD() {
   sdFilePath = String(SD_FILE_PREFIX) + "_" + String(EEPROM.read(EEPROM_SEQNOUP_ADDR) + 1) + String(SD_FILE_SUFFIX);
 }
 
+// -------------------
+// Sets up camera tilt
+// -------------------
+void setupCameraTilt() {
+
+  // Allow allocation of all timers
+	ESP32PWM::allocateTimer(0);
+	ESP32PWM::allocateTimer(1);
+	ESP32PWM::allocateTimer(2);
+	ESP32PWM::allocateTimer(3);
+	cameraTilt.setPeriodHertz(50);    // standard 50 hz servo
+	cameraTilt.attach(CAMERA_TILT_PIN, CAMERA_TILT_SERVO_MIN_PULSE_WIDTH, CAMERA_TILT_SERVO_MAX_PULSE_WIDTH);
+  cameraState = CAMERA_STATE_TAKING_OFF;
+  cameraAngleIndex = 0;
+  updateCameraTilt();
+}
+
 // ---------
 // main loop
 // ---------
@@ -494,6 +543,8 @@ void doSend(osjob_t *j) {
 
   os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(LORAWAN_LOOP_DELAY), doSend);
   if (loopCount > 0) return;
+
+  updateCameraTilt();
 
   // Check if there is not a current TX/RX job running
   if (LMIC.opmode & OP_TXRXPEND) {
@@ -882,6 +933,49 @@ void unsetSensorFlagPayload(int flagOffset, int flagBit) {
 void setSensorFlagPayload(int flagOffset, int flagBit) {
   payload[flagOffset] = payload[flagOffset] | (0b00000001 << (flagBit));
 }
+
+// ------------------
+// Update camera tilt
+// ------------------
+void updateCameraTilt() {
+  updateCameraState();
+  
+  switch (cameraState) {
+    case CAMERA_STATE_TAKING_OFF:
+    case CAMERA_STATE_LANDING:
+      cameraTilt.write(CAMERA_TILT_GROUND_ANGLE);    // tell servo to go to position in variable 'pos'
+		  return;
+    case CAMERA_STATE_ASCENDING:
+      cameraAngleIndex = (cameraAngleIndex + 1) % 3;
+      cameraTilt.write(CAMERA_ANGLES[cameraAngleIndex]);
+      return;
+    case CAMERA_STATE_AROUND_BURST:
+    default:
+      cameraTilt.write(CAMERA_TILT_SKY_ANGLE);
+      return;
+    }
+}
+
+
+// -------------------
+// Update camera state
+// -------------------
+void updateCameraState() {
+  switch (cameraState) {
+    case CAMERA_STATE_TAKING_OFF:
+      if (hasFix && altitude > CAMERA_STATE_TAKING_OFF_ALTITUDE_THRESHOLD)
+        cameraState = CAMERA_STATE_ASCENDING;
+      return;
+    case CAMERA_STATE_ASCENDING:
+      if (hasFix && altitude > CAMERA_STATE_BURST_ALTITUDE_THRESHOLD)
+        cameraState = CAMERA_STATE_AROUND_BURST;
+      return;
+    case CAMERA_STATE_AROUND_BURST:
+      if (hasFix && altitude < CAMERA_STATE_LANDING_ALTITUDE_THRESHOLD)
+        cameraState = CAMERA_STATE_LANDING;
+      return;  
+    }
+ }
 
 // --------------------
 // Display data on OLED
