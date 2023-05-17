@@ -169,7 +169,7 @@ function Decoder(bytes, port) {
   }
   if (decodeBit(bytes,VBAT_PAYLOAD_FLAG_OFFSET, VBAT_PAYLOAD_FLAG_BIT) == 1) {
     var vbatValue = (decodeByte(bytes, offset) * VBAT_ACCURACY) + VBAT_MIN_VALUE;
-    result["vbat"] = parseInt(vbatValue.toFixed(0));
+    result["vbat"] = parseFloat(vbatValue.toFixed(2));
     offset += 1;
   }
   result["gps_fix"] = 0;
