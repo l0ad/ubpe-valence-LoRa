@@ -343,7 +343,7 @@ void setupVBat() { pinMode(VBAT_ADC_PIN, INPUT); }
 // --------------
 void setupI2c() {
 
-    i2cStatus = i2c.begin(OLED_SDA, OLED_SCL);
+    i2cStatus = i2c.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
     #ifdef SERIAL_DEBUG_ON
       if (i2cStatus)
