@@ -184,6 +184,10 @@ function Decoder(bytes, port) {
     offset += 4;
     result["longitude"] = parseFloat(decodeFloat(bytes, offset).toFixed(4));
     offset += 4;
+    result["course"] = decodeByte(bytes, offset);
+    offset += 1;
+    result["speed"] = decodeByte(bytes, offset) * 2;
+    offset += 1;
   }
 
     return result;

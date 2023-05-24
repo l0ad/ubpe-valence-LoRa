@@ -455,7 +455,7 @@ void setupLMIC() {
 
   LMIC_setDrTxpow(LORAWAN_TX_SF, LORAWAN_TX_POWER);  // set data rate and transmit power for uplink
 
-  LMIC.seqnoUp = EEPROM.read(EEPROM_SEQNOUP_ADDR) + 1;  // restore frame counter from EEPROM (+1 to avoid issues if last frame did not ship)
+  LMIC.seqnoUp = EEPROM.read(EEPROM_SEQNOUP_ADDR);  // restore frame counter from EEPROM (+1 to avoid issues if last frame did not ship)
 
   #ifdef SERIAL_DEBUG_ON
     Serial.println("frame counter (at reset) #" + String(LMIC.seqnoUp));
@@ -501,7 +501,7 @@ void setupSD() {
     Serial.printf("SD size : %lluMB\n", cardSize);
   #endif
 
-  sdFilePath = String(SD_FILE_PREFIX) + "_" + String(EEPROM.read(EEPROM_SEQNOUP_ADDR) + 1) + String(SD_FILE_SUFFIX);
+  sdFilePath = String(SD_FILE_PREFIX) + "_" + String(EEPROM.read(EEPROM_SEQNOUP_ADDR)) + String(SD_FILE_SUFFIX);
 }
 
 // -------------------
@@ -907,6 +907,9 @@ int updateGPSPayload(int offset) {
     payload[offset++] = ((uint8_t *)&longitude)[1];
     payload[offset++] = ((uint8_t *)&longitude)[2];
     payload[offset++] = ((uint8_t *)&longitude)[3];
+    payload[offset++] = ((uint8_t ) course);
+    unsigned char halfSpeedValue = (unsigned char) (speed / 2.0);
+    payload[offset++] = halfSpeedValue;
   }
 
   return offset;
