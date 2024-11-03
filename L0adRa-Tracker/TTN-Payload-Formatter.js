@@ -180,9 +180,9 @@ function Decoder(bytes, port) {
     var gpsAltitudeValue = (decodeShort(bytes, offset) * GPS_ALTITUDE_ACCURACY) + GPS_ALTITUDE_MIN_VALUE;
     result["gps_altitude"] = parseInt(gpsAltitudeValue.toFixed(0));
     offset += 2;
-    result["latitude"] = parseFloat(decodeFloat(bytes, offset).toFixed(4));
+    result["latitude"] = parseFloat(decodeFloat(bytes, offset).toFixed(5));
     offset += 4;
-    result["longitude"] = parseFloat(decodeFloat(bytes, offset).toFixed(4));
+    result["longitude"] = parseFloat(decodeFloat(bytes, offset).toFixed(5));
     offset += 4;
     result["course"] = decodeByte(bytes, offset);
     offset += 1;
