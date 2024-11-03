@@ -1,9 +1,7 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <SPI.h>
-#include <SD.h>
-//#include <OneWire.h>            // OneWrire by Jim Studt, ... (v2.3.7)
-//#include <DallasTemperature.h>  // DallasTemperature by Miles Burton, ... (v3.9.0)
+#include <SD.h>                   // Arduino/ Sparkfun 1.2.3 -> 1.3.4 (https://docs.arduino.cc/libraries/sd/)
 
 #include <ESP32Servo.h>
 
@@ -11,7 +9,7 @@
 #include <hal/hal.h>
 #include <Wire.h>
 
-#include <Adafruit_SSD1306.h>  // Adafruit SSD1306 (v2.5.7)
+#include <Adafruit_SSD1306.h>  // Adafruit SSD1306 (v2.5.9) -> 2.5.12
 #include <DHT.h>               // DHT Sensor Library by Adafruit (v1.4.4)
 #include <Adafruit_BMP085.h>   // Adafruit BMP085 Library (v1.2.2)
 #include <DFRobot_SCD4X.h>     // DFRobot SCD4x Library (v1.0.1)
@@ -137,6 +135,41 @@ float vBat;
 #define GPS_ALTITUDE_MAX_VALUE 50000.0
 #define GPS_ALTITUDE_ACCURACY 1.0
 
+const byte SET_AIRBORNE1G[44] = { 0xB5, 0x62, 0x06, 0x24, 0x24, 0x00, 0xFF, 0xFF, 
+                                  0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x10, 0x27, 
+                                  0x00, 0x00, 0x05, 0x00, 0xFA, 0x00, 0xFA, 0x00, 
+                                  0x64, 0x00, 0x2C, 0x01, 0x00, 0x00, 0x00, 0x00, 
+                                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+                                  0x00, 0x00, 0x16, 0xDC};
+const byte GET_AIRBORNE[8] = {0xB5, 0x62, 0x06, 0x24, 0x00, 0x00, 0x2A, 0x84};
+
+const byte NMEA_GGA_OFF[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x23};
+const byte NMEA_GGA_ON[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28};
+
+const byte NMEA_GLL_OFF[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A};
+const byte NMEA_GLL_ON[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x2F};
+
+const byte NMEA_GSA_OFF[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x31};
+const byte NMEA_GSA_ON[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x36};
+
+const byte NMEA_GSV_OFF[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x38};
+const byte NMEA_GSV_ON[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x03, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x03, 0x3D};
+
+const byte NMEA_RMC_OFF[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x3F};
+const byte NMEA_RMC_ON[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x44};
+
+const byte NMEA_VTG_OFF[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x46};
+const byte NMEA_VTG_ON[16] = {0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x05, 0x4B};
+
+byte UBX_RESPONSE[54];
+
+#define UBX_DELAY 100
+
+int airborneMode = 0;
+#define AIRBORNE_MODE 6
+
+String airborneString = "(?)";
+
 TinyGPS gps;
 
 unsigned short oldSentences = 0;
@@ -170,7 +203,7 @@ const lmic_pinmap lmic_pins = {
 };
 
 #define LORAWAN_LOOP_DELAY 10     // Delay between 2 loops (in seconds)
-#define LORAWAN_TX_LOOP_COUNT 10  // Loop count between 2 transmissions
+#define LORAWAN_TX_LOOP_COUNT 8  // Loop count between 2 transmissions
 #define LORAWAN_TX_ADR false      // Automatic Data Rate (disabled)
 #define LORAWAN_TX_SF SF9         // Spread Factor (9)
 #define LORAWAN_TX_POWER 14       // Tx Power (14dB, max)
@@ -197,11 +230,12 @@ void os_getDevKey(unsigned char *buf) {}
 #define OLED_X 128      // Screen width in pixels
 #define OLED_Y 64       // Screen height in pixels
 #define OLED_LINE0 0    // Screen line 0 Y
-#define OLED_LINE1 12   // Screen line 1 Y
-#define OLED_LINE2 22   // Screen line 2 Y
-#define OLED_LINE3 32   // Screen line 3 Y
-#define OLED_LINE4 42   // Screen line 4 Y
-#define OLED_LINE5 52   // Screen line 5 Y
+#define OLED_LINE1 9    // Screen line 1 Y
+#define OLED_LINE2 18   // Screen line 2 Y
+#define OLED_LINE3 27   // Screen line 3 Y
+#define OLED_LINE4 36   // Screen line 4 Y
+#define OLED_LINE5 45   // Screen line 5 Y
+#define OLED_LINE6 54   // Screen line 6 Y
 Adafruit_SSD1306 oled(OLED_X, OLED_Y, &i2c, OLED_RST_PIN);
 boolean oledStatus;
 
@@ -265,6 +299,7 @@ boolean sdWriteFile(fs::FS &fs, const char *path, const char *message, const cha
 #define CAMERA_TILT_SERVO_MIN_PULSE_WIDTH 500
 #define CAMERA_TILT_SERVO_MAX_PULSE_WIDTH 2450
 
+#define CAMERA_STATE_RESET -1
 #define CAMERA_STATE_TAKING_OFF 0
 #define CAMERA_STATE_ASCENDING 1
 #define CAMERA_STATE_AROUND_BURST 2
@@ -296,12 +331,15 @@ void setup() {
   #ifdef SERIAL_DEBUG_ON
     setupSerialDebug();
   #endif
-
-  setupGPS();
-  setupDHT();
-  setupVBat();
   setupI2c();
   setupOled();
+
+  setupGPS();
+  switchGPSToAirborneMode();
+  setupDHT();
+  setupVBat();
+//  setupI2c();
+//  setupOled();
   setupBMP();
   setupSCD4x();
   setupSD();
@@ -322,10 +360,14 @@ void setupSerialDebug() {
 // Set up GPS module
 // -----------------
 void setupGPS() {
-
+  
   GPS_SERIAL.begin(GPS_BAUD_RATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-  pinMode(GPS_ON_PIN, OUTPUT);
-  digitalWrite(GPS_ON_PIN, HIGH);
+  delay(1000);
+  pinMode(GPS_ON_PIN, OUTPUT);   // v0.1
+  digitalWrite(GPS_ON_PIN, HIGH);  // v0.1
+  // pinMode(GPS_ON_PIN, OUTPUT_OPEN_DRAIN);  // v1.0
+  // digitalWrite(GPS_ON_PIN, LOW);   // v1.0
+  delay(500);
 }
 
 // -----------------
@@ -371,9 +413,12 @@ void setupOled() {
   if (!oledStatus) return;
     
   pinMode(OLED_RST, OUTPUT);
+  //pinMode(RST_OLED, OUTPUT);
   digitalWrite(OLED_RST, LOW);
+  //digitalWrite(RST_OLED, LOW);
   delay(20);
   digitalWrite(OLED_RST, HIGH);
+  //digitalWrite(RST_OLED, HIGH);
   oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR, false, false);
   oled.clearDisplay();
   oled.setTextColor(WHITE);
@@ -455,7 +500,7 @@ void setupLMIC() {
 
   LMIC_setDrTxpow(LORAWAN_TX_SF, LORAWAN_TX_POWER);  // set data rate and transmit power for uplink
 
-  LMIC.seqnoUp = EEPROM.read(EEPROM_SEQNOUP_ADDR);  // restore frame counter from EEPROM (+1 to avoid issues if last frame did not ship)
+  LMIC.seqnoUp = readLmicSeqNoUp();  // restore frame counter from EEPROM
 
   #ifdef SERIAL_DEBUG_ON
     Serial.println("frame counter (at reset) #" + String(LMIC.seqnoUp));
@@ -516,7 +561,7 @@ void setupCameraTilt() {
 	ESP32PWM::allocateTimer(3);
 	cameraTilt.setPeriodHertz(50);    // standard 50 hz servo
 	cameraTilt.attach(CAMERA_TILT_PIN, CAMERA_TILT_SERVO_MIN_PULSE_WIDTH, CAMERA_TILT_SERVO_MAX_PULSE_WIDTH);
-  cameraState = CAMERA_STATE_TAKING_OFF;
+  cameraState = CAMERA_STATE_RESET;
   cameraAngleIndex = 0;
   updateCameraTilt();
 }
@@ -559,14 +604,13 @@ void doSend(osjob_t *j) {
       LMIC_setTxData2(1, payload, payloadSize, 0);  // Prepare upstream data transmission
     #endif
 
-    EEPROM.write(EEPROM_SEQNOUP_ADDR, LMIC.seqnoUp);
-    EEPROM.commit();
+    saveLmicSeqNoUp();
 
     #ifdef SERIAL_DEBUG_ON
       Serial.println("Sending uplink packet..." + String(LMIC.seqnoUp));
     #endif
 
-    oledUpdateLine(OLED_LINE5, String(LMIC.seqnoUp) + " ->", true);
+    oledUpdateLine(OLED_LINE6, String(LMIC.seqnoUp) + " ->", true);
   }
 }
 
@@ -586,7 +630,7 @@ void onEvent(ev_t ev) {
         Serial.println(F("EV_TXCOMPLETE (includes waiting for RX windows)"));
       #endif
 
-      oledUpdateLine(OLED_LINE5, String(LMIC.seqnoUp) + " !", true);
+      oledUpdateLine(OLED_LINE6, String(LMIC.seqnoUp) + " !", true);
 
       if (LMIC.txrxFlags & TXRX_ACK)
 
@@ -944,6 +988,13 @@ void updateCameraTilt() {
   updateCameraState();
   
   switch (cameraState) {
+    case CAMERA_STATE_RESET:
+      for (int index=0; index < 3; index++) {
+         cameraTilt.write(CAMERA_ANGLES[index]);
+         delay(1000);
+      }
+      cameraState = CAMERA_STATE_TAKING_OFF;
+      return;
     case CAMERA_STATE_TAKING_OFF:
     case CAMERA_STATE_LANDING:
       cameraTilt.write(CAMERA_TILT_GROUND_ANGLE);    // tell servo to go to position in variable 'pos'
@@ -987,16 +1038,17 @@ void dataOledDisplay() {
 
   if (!oledStatus) return;
 
-  String line0 = String(TRACKER_NAME) + " ABP";
+  String line0 = String(TRACKER_NAME) + " " + airborneString;
   String line1 = "DHT " + String(dhtTempValue) + "C / " + String(dhtHumidityValue) + "%";
   String line2 = "BMP " + String(bmpTempValue) + "C / " + String(bmpPressureValue) + "Pa";
 
   String line3 = "SCD " + String(scd4xTempValue) + "C / " + String(scd4xHumidityValue) + "%";
   String line4 = "SCD " + String(scd4xCO2Value) + "ppm / ";
-  String line5 = "Fix";
+  String line5 = "Fix / ";
   if (!hasFix)
     line5 = "no " + line5;
-  line5 += " " + String(vBat) + " V / " + String(LMIC.seqnoUp);
+  line5 += " " + String(vBat) + "V ";
+  String line6 =   String(LMIC.seqnoUp);
 
   oled.clearDisplay();
   oledUpdateLine(OLED_LINE0, line0, false);
@@ -1005,6 +1057,7 @@ void dataOledDisplay() {
   oledUpdateLine(OLED_LINE3, line3, false);
   oledUpdateLine(OLED_LINE4, line4, false);
   oledUpdateLine(OLED_LINE5, line5, false);
+  oledUpdateLine(OLED_LINE6, line6, false);
 }
 
 // --------------------------
@@ -1051,6 +1104,8 @@ void dataSerialPrint() {
   Serial.println(course);
   Serial.print("speed: ");
   Serial.println(speed);
+  Serial.print("cameraState: ");
+  Serial.println(cameraState);
 }
 
 // ----------------
@@ -1063,14 +1118,14 @@ void dataSdWrite() {
   String dataStr = String(millis() / 1000) + "," + String(LMIC.seqnoUp) + "," + String(loopCount) + ",";
   dataStr += String(dhtTempValue) + "," + String(dhtHumidityValue) + ",";
   dataStr += String(bmpTempValue) + "," + String(bmpPressureValue) + ",";
-  dataStr += String(scd4xTempValue) + "," + String(scd4xHumidityValue) + "," + String(scd4xCO2Value);
+  dataStr += String(scd4xTempValue) + "," + String(scd4xHumidityValue) + "," + String(scd4xCO2Value) + ",";
   dataStr += String(vBat) + ",";
   if (hasFix)
-    dataStr += "1";
+    dataStr += "1,"
   else
-    dataStr += "0";
-  dataStr += "," + String(hms) + "," + String(latitude, 5) + "," + String(longitude, 5) + "," + String(altitude, 1) + "," + String(sats) + "," + String(course) + "," + String(speed, 1);
-
+    dataStr += "0,";
+  dataStr += String(hms) + "," + String(latitude, 5) + "," + String(longitude, 5) + "," + String(altitude, 1) + "," + String(sats) + "," + String(course) + "," + String(speed, 1) + "," ;
+  dataStr += String(cameraState);
   dataStr += "\r\n";
 
   boolean result;
@@ -1095,3 +1150,108 @@ void dataSdWrite() {
 
   file.close();
 }
+
+void switchGPSToAirborneMode() {
+  oledUpdateLine(OLED_LINE1, "muting NMEA", true);
+  Serial.println("muting nmea");
+  gpsSentencesMute();
+  delay(2000);
+
+  oledUpdateLine(OLED_LINE1, "reading AirBorne", true);  
+  airborneMode = getGPSAirborne();
+  airborneString = "";
+  if (airborneMode != AIRBORNE_MODE) 
+    airborneString = "(X)";
+  else
+     airborneString = "(" + String(airborneMode) + ")";
+  oledUpdateLine(OLED_LINE2, airborneString, true);  
+  delay(UBX_DELAY);
+
+  oledUpdateLine(OLED_LINE1, "switching airBorne", true);  
+  sendGPSCommand(SET_AIRBORNE1G, 44);
+  delay(UBX_DELAY);
+  
+  oledUpdateLine(OLED_LINE1, "reading AirBorne", true);  
+  airborneMode = getGPSAirborne();
+  
+  if (airborneMode != AIRBORNE_MODE) 
+    airborneString = "(X)";
+  else
+     airborneString = "(" + String(airborneMode) + ")";
+  oledUpdateLine(OLED_LINE2, airborneString, true);  
+  // delay(UBX_DELAY);
+
+  oledUpdateLine(OLED_LINE1, "unmuting NMEA", true);
+  gpsSentencesUnmute();
+  oledUpdateLine(OLED_LINE1, "", true);
+  //delay(UBX_DELAY);
+  }
+
+void gpsSentencesMute() {
+  sendGPSCommand(NMEA_GGA_OFF, 16);
+  delay(UBX_DELAY);
+  sendGPSCommand(NMEA_GLL_OFF, 16);
+  delay(UBX_DELAY);
+  sendGPSCommand(NMEA_GSA_OFF, 16);
+  delay(UBX_DELAY);
+  sendGPSCommand(NMEA_GSV_OFF, 16);
+  delay(UBX_DELAY);
+  sendGPSCommand(NMEA_RMC_OFF, 16);
+  delay(UBX_DELAY);
+  sendGPSCommand(NMEA_VTG_OFF, 16);
+  delay(UBX_DELAY); 
+}
+
+void gpsSentencesUnmute() {
+  sendGPSCommand(NMEA_GGA_ON, 16);
+  delay(UBX_DELAY);
+  sendGPSCommand(NMEA_GSV_ON, 16);
+  delay(UBX_DELAY);
+  sendGPSCommand(NMEA_RMC_ON, 16);
+  delay(UBX_DELAY); 
+}
+
+void sendGPSCommand(const unsigned char *command, int size) {
+  Serial2.write(command, size);
+}
+
+int getGPSAirborne() {
+ while (GPS_SERIAL.available()) {
+    GPS_SERIAL.read();
+  }
+  sendGPSCommand(GET_AIRBORNE, 8);
+  int index = 0;
+  delay(UBX_DELAY); 
+  
+  while (GPS_SERIAL.available()) {
+    UBX_RESPONSE[index++] = GPS_SERIAL.read();
+    if (index > 8) return UBX_RESPONSE[8];
+  }
+  
+  return 0;
+}
+
+void saveLmicSeqNoUp() {
+  writeUnsignedIntIntoEEPROM(EEPROM_SEQNOUP_ADDR, LMIC.seqnoUp);
+
+}
+
+int readLmicSeqNoUp() {
+  return readUnsignedIntFromEEPROM(EEPROM_SEQNOUP_ADDR);  
+}
+
+int readUnsignedIntFromEEPROM(int address)
+{
+  byte byte1 = EEPROM.read(address);
+  byte byte2 = EEPROM.read(address + 1);
+  return (unsigned int) ((byte1 << 8) + byte2);
+}
+
+void writeUnsignedIntIntoEEPROM(int address, int number)
+{ 
+  EEPROM.write(address, number >> 8);
+  EEPROM.write(address + 1, number & 0xFF);
+  EEPROM.commit();
+}
+
+
